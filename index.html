@@ -1,0 +1,54 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <!-- ... (keep existing meta tags and base href) ... -->
+  <base href="/">
+    <link rel="icon" type="image/png" href="/favicon-96x96.png" sizes="96x96" />
+<link rel="icon" type="image/svg+xml" href="/favicon.svg" />
+<link rel="shortcut icon" href="/favicon.ico" />
+<link rel="apple-touch-icon" sizes="180x180" href="/apple-touch-icon.png" />
+<link rel="manifest" href="/site.webmanifest" />
+  <meta charset="UTF-8">
+  <meta content="IE-Edge" http-equiv="X-UA-Compatible">
+  <meta name="description" content="A new Flutter project.">
+
+  <!-- iOS meta tags & icons -->
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-status-bar-style" content="black">
+  <meta name="apple-mobile-web-app-title" content="portfolio">
+  <link rel="apple-touch-icon" href="icons/Icon-192.png">
+
+  <!-- Favicon -->
+  <link rel="icon" type="image/png" href="favicon.png"/>
+
+  <title>portfolio</title>
+  <link rel="manifest" href="manifest.json">
+
+  <!-- ADD THIS STYLE BLOCK -->
+  <style>
+    /* Make the body background transparent so the canvas shows through */
+    body {
+      background-color: transparent;
+    }
+    /* Style for our background canvas */
+    #matrix-canvas {
+      position: fixed; /* Stick to the viewport */
+      top: 0;
+      left: 0;
+      width: 100%;
+      height: 100%;
+      z-index: -1; /* CRITICAL: Puts the canvas behind the Flutter app */
+    }
+  </style>
+</head>
+<body>
+  <!-- ADD THE CANVAS ELEMENT HERE -->
+  <canvas id="matrix-canvas"></canvas>
+
+  <!-- This is the standard Flutter script -->
+  <script src="flutter_bootstrap.js" async></script>
+
+  <!-- ADD THE SCRIPT FOR OUR ANIMATION HERE -->
+  <script src="matrix.js"></script>
+</body>
+</html>

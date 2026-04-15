@@ -1,6 +1,7 @@
 package main
 
 import (
+	"bytes"
 	"crypto/md5"
 	"encoding/json"
 	"fmt"
@@ -52,6 +53,7 @@ type SecurityIssue struct {
 	Description string `json:"description"`
 	Line        int    `json:"line"`
 	Column      int    `json:"column"`
+	File        string `json:"file"`
 	Code        string `json:"code"`
 	Tool        string `json:"tool"`
 	CWE         string `json:"cwe,omitempty"`
@@ -321,13 +323,14 @@ func (e *ContextEngine) RunGosec() ([]SecurityIssue, error) {
 		var line int
 		fmt.Sscanf(issue.Line, "%d", &line)
 
-		filepath.Rel(e.ProjectPath, issue.File)
+		relPath, _ := filepath.Rel(e.ProjectPath, issue.File)
 
 		issues = append(issues, SecurityIssue{
 			Severity:    strings.ToUpper(issue.Severity),
 			Type:        issue.RuleID,
 			Description: issue.Details,
 			Line:        line,
+			File:        relPath,
 			Code:        issue.Code,
 			Tool:        "gosec",
 			CWE:         issue.CWE.ID,
@@ -361,7 +364,7 @@ func (e *ContextEngine) RunBandit() ([]SecurityIssue, error) {
 
 	issues := make([]SecurityIssue, 0)
 	for _, finding := range result.Results {
-		filepath.Rel(e.ProjectPath, finding.Filename)
+		relPath, _ := filepath.Rel(e.ProjectPath, finding.Filename)
 
 		severity := strings.ToUpper(finding.IssueSeverity)
 		if severity == "UNDEFINED" {
@@ -378,6 +381,7 @@ func (e *ContextEngine) RunBandit() ([]SecurityIssue, error) {
 			Type:        finding.TestID,
 			Description: finding.IssueText,
 			Line:        finding.LineNumber,
+			File:        relPath,
 			Code:        finding.Code,
 			Tool:        "bandit",
 			CWE:         cwe,
@@ -404,6 +408,12 @@ func (e *ContextEngine) RunESLint() ([]SecurityIssue, error) {
 		return nil, nil
 	}
 
+	idx := bytes.IndexByte(output, '[')
+	if idx == -1 {
+		return nil, fmt.Errorf("failed to parse eslint output: no JSON array found")
+	}
+	output = output[idx:]
+
 	var result ESLintResult
 	if err := json.Unmarshal(output, &result); err != nil {
 		return nil, fmt.Errorf("failed to parse eslint output: %v", err)
@@ -411,7 +421,7 @@ func (e *ContextEngine) RunESLint() ([]SecurityIssue, error) {
 
 	issues := make([]SecurityIssue, 0)
 	for _, file := range result {
-		filepath.Rel(e.ProjectPath, file.FilePath)
+		relPath, _ := filepath.Rel(e.ProjectPath, file.FilePath)
 
 		for _, msg := range file.Messages {
 			if msg.RuleID == "" || msg.Severity < 1 {
@@ -436,6 +446,7 @@ func (e *ContextEngine) RunESLint() ([]SecurityIssue, error) {
 				Description: msg.Message,
 				Line:        msg.Line,
 				Column:      msg.Column,
+				File:        relPath,
 				Tool:        "eslint",
 			})
 		}
@@ -484,13 +495,14 @@ func (e *ContextEngine) RunFlawfinder() ([]SecurityIssue, error) {
 				severity = "MEDIUM"
 			}
 
-			filepath.Rel(e.ProjectPath, matches[1])
+			relPath, _ := filepath.Rel(e.ProjectPath, matches[1])
 
 			issues = append(issues, SecurityIssue{
 				Severity:    severity,
 				Type:        matches[5],
 				Description: matches[6],
 				Line:        lineNum,
+				File:        relPath,
 				Tool:        "flawfinder",
 			})
 		}
@@ -527,7 +539,7 @@ func (e *ContextEngine) ScanDirectory(root string) error {
 	// Create map for quick lookup of security issues by file
 	securityByFile := make(map[string][]SecurityIssue)
 	for _, issue := range allSecurityIssues {
-		securityByFile[issue.Type] = append(securityByFile[issue.Type], issue)
+		securityByFile[issue.File] = append(securityByFile[issue.File], issue)
 	}
 
 	// Walk directory and process files
@@ -557,13 +569,14 @@ func (e *ContextEngine) ScanDirectory(root string) error {
 		}
 
 		relPath, _ := filepath.Rel(root, path)
-		return e.processFile(path, relPath, info, allSecurityIssues)
+		return e.processFile(path, relPath, info, securityByFile[relPath])
 	})
 }
 
 func (e *ContextEngine) shouldExclude(path string) bool {
+	base := filepath.Base(path)
 	for _, pattern := range e.Config.ExcludePatterns {
-		if strings.Contains(path, pattern) {
+		if base == pattern {
 			return true
 		}
 	}
@@ -580,7 +593,7 @@ func (e *ContextEngine) shouldInclude(path string) bool {
 	return false
 }
 
-func (e *ContextEngine) processFile(path, relPath string, info fs.FileInfo, allIssues []SecurityIssue) error {
+func (e *ContextEngine) processFile(path, relPath string, info fs.FileInfo, fileIssues []SecurityIssue) error {
 	hash := e.getFileHash(path)
 
 	if e.Config.CacheEnabled {
@@ -612,10 +625,8 @@ func (e *ContextEngine) processFile(path, relPath string, info fs.FileInfo, allI
 	ctx.Functions = extractFunctions(ctx.Content, ctx.Language)
 
 	// Match security issues to this file
-	for _, issue := range allIssues {
-		if strings.Contains(issue.Code, relPath) || strings.HasSuffix(issue.Code, filepath.Base(path)) {
-			ctx.Security = append(ctx.Security, issue)
-		}
+	if fileIssues != nil {
+		ctx.Security = append(ctx.Security, fileIssues...)
 	}
 
 	// Add regex-based analysis
@@ -831,7 +842,8 @@ func detectLanguage(path string) string {
 		".py": "python", ".java": "java", ".rs": "rust",
 		".c": "c", ".cpp": "cpp", ".h": "c", ".hpp": "cpp",
 		".html": "html", ".css": "css", ".rb": "ruby", ".php": "php",
-		".dart": "dart", ".mjs": "javascript",
+		".dart": "dart", ".mjs": "javascript", ".sh": "shell",
+		".cs": "c#", ".c#": "c#", ".axaml": "xml",
 	}
 	if lang, ok := langMap[ext]; ok {
 		return lang
@@ -926,15 +938,17 @@ func (e *ContextEngine) saveCache() error {
 
 func main() {
 	config := Config{
-		MaxFileSize:    100 * 1024,
-		MaxTotalTokens: 100000,
+		MaxFileSize:    1000 * 1024,
+		MaxTotalTokens: 10000000000,
 		ExcludePatterns: []string{
 			"node_modules", "vendor", ".git", "dist", "build",
 			"__pycache__", ".pytest_cache", "target", ".next",
+			"venv", ".venv",
 		},
 		IncludeExtensions: []string{
 			".go", ".js", ".ts", ".py", ".java", ".rs",
-			".c", ".cpp", ".h", ".css", ".html", ".rb", ".php", ".dart", ".mjs",
+			".c", ".cpp", ".h", ".css", ".html", ".rb", ".php", ".dart", ".mjs", ".sh",
+			".cs", ".c#", ".axaml",
 		},
 		EnableSecurity: true,
 		UseGosec:       true,
